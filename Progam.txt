@@ -1,0 +1,15 @@
+attention outputs / covariance :
+prq centre normalise ????
+variance : nombre de valeurs propres, vecteurs propres, lignes/ colonnes orthogonales
+echelle 
+
+
+embd : 
+covariance, noise, proj ???
+
+cmap coolwarm !!!!!
+
+
+test1 : sur text (en anglais !!!) 256 tokens
+test2 : sur deux textes concatenes differents
+test3 : un motif qui se repete 
