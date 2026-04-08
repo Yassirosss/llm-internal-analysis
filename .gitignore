@@ -1,0 +1,7 @@
+# PROJECT SPECIFIC - Excluding Figures & Experimental Results
+
+**/figures/
+**/figures_bug_fixed/
+**/*_results/
+**/*.png
+**/*.jpg
