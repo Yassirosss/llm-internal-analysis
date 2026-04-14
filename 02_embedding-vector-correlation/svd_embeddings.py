@@ -27,24 +27,11 @@ tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_NAME,
     torch_dtype=torch.float32,
-    device_map="auto"
+    device_map="auto",
+    output_hidden_states=True
 )
 
 model.eval()
-
-attn_outputs = {}
-
-def make_attn_hook(layer_id):
-    def hook(module, inp, out):
-        # out can be a tensor or a tuple
-        if isinstance(out, tuple):
-            attn_outputs[layer_id] = out[0].detach().cpu()
-        else:
-            attn_outputs[layer_id] = out.detach().cpu()
-    return hook
-
-for layer_id, layer in enumerate(model.model.layers):
-    layer.self_attn.register_forward_hook(make_attn_hook(layer_id))
 
 INPUT_FILE = "text.txt"
 
@@ -54,31 +41,22 @@ with open(INPUT_FILE, "r", encoding="utf-8") as f:
 max_len = 256
 inputs = tokenizer(text, return_tensors="pt",truncation=True,max_length=max_len).to(device)
 
-with torch.no_grad():
-    outputs = model(**inputs)
-
-first_layer = list(attn_outputs.keys())[0]
-seq_len = attn_outputs[first_layer].shape[1]
+outputs = model(**inputs, output_hidden_states=True)
+hidden_states = outputs.hidden_states
 
 svd_vals = {}      # valeurs singulières
 svd_vecs = {}      # vecteurs singuliers droits
 k_svd = {}         # dimension retenue
-cosine_raw = {}    # cosine similarity brute
 cosine_svd = {}    # cosine similarity après projection
+p = 0.999
 
-p = 0.9
-for layer_id, X in attn_outputs.items():
+
+for layer_id, H in enumerate(hidden_states):
 
     # -------------------------
     # Données
     # -------------------------
-    X = X.squeeze(0).numpy()  # (T, d)
-
-    # -------------------------
-    # Cosine similarity brute
-    # -------------------------
-    X_norm = X / np.linalg.norm(X, axis=1, keepdims=True)
-    cosine_raw[layer_id] = X_norm @ X_norm.T
+    X = H.squeeze(0).detach().cpu().numpy()  # (T, d)
 
     # -------------------------
     # SVD non centrée
@@ -90,7 +68,7 @@ for layer_id, X in attn_outputs.items():
     svd_vecs[layer_id] = V
 
     # -------------------------
-    # Sélection automatique de k (énergie p%)
+    # Sélection automatique de k
     # -------------------------
     energy = S**2
     cum_energy = np.cumsum(energy) / np.sum(energy)
@@ -98,15 +76,18 @@ for layer_id, X in attn_outputs.items():
     k_svd[layer_id] = k
 
     # -------------------------
-    # Projection SVD
+    # Projection
     # -------------------------
     X_proj = X @ V[:, :k]
 
     # -------------------------
     # Cosine similarity projetée
     # -------------------------
-    X_proj_norm = X_proj / np.linalg.norm(X_proj, axis=1, keepdims=True)
+    norms = np.linalg.norm(X_proj, axis=1, keepdims=True)
+    X_proj_norm = X_proj / (norms + 1e-8)
+
     cosine_svd[layer_id] = X_proj_norm @ X_proj_norm.T
+
 
 #Figures — Valeurs singulières
 SVD_DIR = os.path.join(FIG_DIR, "svd_vals")
@@ -125,22 +106,6 @@ for layer_id, S in svd_vals.items():
     plt.savefig(fname, bbox_inches="tight")
     plt.close()
 
-#Figures — Cosine similarity brute
-COS_RAW_DIR = os.path.join(FIG_DIR, "cosine_raw")
-os.makedirs(COS_RAW_DIR, exist_ok=True)
-
-for layer_id, cos_sim in cosine_raw.items():
-    plt.figure(figsize=(6,5))
-    plt.imshow(cos_sim, cmap="coolwarm", vmin=-1, vmax=1)
-    plt.colorbar(label="Cosine similarity")
-    plt.title(f"Layer {layer_id} – Cosine similarity (raw)")
-    plt.xlabel("Token index")
-    plt.ylabel("Token index")
-    plt.tight_layout()
-
-    fname = os.path.join(COS_RAW_DIR, f"layer_{layer_id}_cosine_raw.png")
-    plt.savefig(fname, bbox_inches="tight")
-    plt.close()
 
 #Figures — Cosine similarity après projection SVD
 COS_SVD_DIR = os.path.join(FIG_DIR, "cosine_svd_proj")

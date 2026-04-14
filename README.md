@@ -27,7 +27,6 @@ llm-internal-analysis/
 │   └── long_context_analysis.ipynb
 │
 ├── 02_embedding-vector-correlation/
-│   ├── cosine_similarity_embeddings.py
 │   ├── pca_attention_outputs.py
 │   ├── pca_embeddings.py
 │   ├── svd_attention_outputs.py
@@ -64,7 +63,6 @@ Five scripts, each generating figures per layer:
 
 | Script | Method | Output figures |
 |---|---|---|
-| `cosine_similarity_embeddings.py` | Raw cosine similarity between token embeddings | Cosine similarity matrices |
 | `pca_embeddings.py` | PCA on hidden states (centered) | Eigenvalue spectrum, centered cosine similarity, projected cosine similarity (seq_len denoising), projected cosine similarity (PCA — 90% variance) |
 | `pca_attention_outputs.py` | PCA on attention outputs (centered) | Same 4 figure types as above |
 | `svd_embeddings.py` | SVD on hidden states (non-centered) | Singular values, cosine similarity after SVD projection (90% variance) |
