@@ -114,14 +114,14 @@ All scripts in `02_embedding-vector-correlation/` share a standardized Command L
 python 02_embedding-vector-correlation/pca_embeddings.py --input 03_data/alice_wonderland.txt
 ```
 
-2. Run SVD on attention outputs with a stricter threshold (99% energy retention):
+2. Run SVD on attention outputs with a stricter threshold (99% variance retention):
 
 ```bash
 python 02_embedding-vector-correlation/svd_attention_outputs.py --input 03_data/alice_vs_quantum.txt --p 0.99
 ```
 
-3. Run SVD on hidden states with high stability threshold:
-   *Note: The residual stream contains a strong global directional bias. A high threshold (e.g. 0.999) is recommended to avoid overly uniform cosine similarity matrices.*
+3. Run SVD on hidden states with high stability threshold 
+   (*Note: The residual stream contains a strong global directional bias. A high threshold (e.g. 0.999) is recommended to avoid overly uniform cosine similarity matrices.*) :
 
 ```bash
 python 02_embedding-vector-correlation/svd_embeddings.py --input 03_data/alice_wonderland.txt --p 0.999
