@@ -24,7 +24,7 @@ The analysis is conducted on [LLaMA 3.2 1B Instruct](https://huggingface.co/meta
 llm-internal-analysis/
 │
 ├── 01_long-context-modeling/
-│   └── long_context_analysis.ipynb
+│   └── long_context_analysis.py
 │
 ├── 02_embedding-vector-correlation/
 │   ├── pca_attention_outputs.py
@@ -51,7 +51,7 @@ llm-internal-analysis/
 
 ### Chapter 3 — Long Context Modeling (`01_long-context-modeling/`)
 
-A single notebook covering:
+A single script covering:
 
 - **RoPE (Rotary Positional Embeddings)** — mathematical formalism, geometric properties, and implementation in LLaMA 3.2
 - **Attention pattern analysis** — head diversity, depth-wise evolution, attention sink phenomenon
@@ -59,7 +59,7 @@ A single notebook covering:
 
 ### Chapter 4 — Embedding Vectors Correlation Analysis (`02_embedding-vector-correlation/`)
 
-Five scripts, each generating figures per layer:
+Four scripts, each generating figures per layer:
 
 | Script | Method | Output figures |
 |---|---|---|
@@ -81,19 +81,51 @@ pip install -r requirements.txt
 ```
 
 Main dependencies: `torch`, `transformers`, `numpy`, `matplotlib`, `scikit-learn`.
+### Running the Scripts
 
-### Running a script
+#### Chapter 3
 
-Each script in `02_embedding-vector-correlation/` accepts an `--input` argument to specify the text file:
+To generate the attention heatmaps and RoPE visualizations:
 
 ```bash
-python pca_embeddings.py --input ../03_data/alice_wonderland.txt
-python pca_embeddings.py --input ../03_data/alice_vs_quantum.txt
+python 01_long-context-modeling/long_context_analysis.py
 ```
 
-If no argument is provided, the default input is `alice_wonderland.txt`.
+---
 
-Generated figures are saved locally in a `figures/` subfolder (not tracked by git — see `.gitignore`).
+#### Chapter 4
+
+All scripts in `02_embedding-vector-correlation/` share a standardized Command Line Interface (CLI).
+
+**General Arguments:**
+
+* `--input` (required): Path to the text file to analyze.
+* `--p` (optional): Variance/energy retention threshold (Default: `0.9`).
+* `--max_length` (optional): Maximum sequence length to tokenize (Default: `256`).
+* `--model` (optional): HuggingFace model name (Default: `meta-llama/Llama-3.2-1B-Instruct`).
+
+---
+
+### Examples of usage
+
+1. Run standard PCA on hidden states with default settings (p=0.9):
+
+```bash
+python 02_embedding-vector-correlation/pca_embeddings.py --input 03_data/alice_wonderland.txt
+```
+
+2. Run SVD on attention outputs with a stricter threshold (99% energy retention):
+
+```bash
+python 02_embedding-vector-correlation/svd_attention_outputs.py --input 03_data/alice_vs_quantum.txt --p 0.99
+```
+
+3. Run SVD on hidden states with high stability threshold:
+   *Note: The residual stream contains a strong global directional bias. A high threshold (e.g. 0.999) is recommended to avoid overly uniform cosine similarity matrices.*
+
+```bash
+python 02_embedding-vector-correlation/svd_embeddings.py --input 03_data/alice_wonderland.txt --p 0.999
+```
 
 ---
 
@@ -109,6 +141,6 @@ Generated figures are saved locally in a `figures/` subfolder (not tracked by gi
 
 ## Notes
 
-- Figures are not tracked by git. Run the scripts to regenerate them.
+- Figures are not tracked by git. Run the scripts to regenerate them locally in the `figures/` directory.
 - The model is loaded from HuggingFace (`meta-llama/Llama-3.2-1B-Instruct`). A HuggingFace token with access to the model is required.
 - All experiments were run on Google Colab (GPU).

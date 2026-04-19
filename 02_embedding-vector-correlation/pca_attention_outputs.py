@@ -1,4 +1,5 @@
 import os
+import argparse
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -6,191 +7,192 @@ import matplotlib
 matplotlib.use('Agg')
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from huggingface_hub import login
-from torch.nn.functional import cosine_similarity
-from sklearn.decomposition import PCA
 
-MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"
-FIG_DIR = "figures"
-INPUT_FILE = "text.txt"
+def select_pca_dim(eigvals, p=0.9):
+    total = np.sum(eigvals)
+    cum = np.cumsum(eigvals)
+    return np.searchsorted(cum / total, p) + 1
 
-os.makedirs(FIG_DIR, exist_ok=True)
+def main(args):
+    # ============================================================
+    # 1. SETUP DYNAMIC DIRECTORIES
+    # ============================================================
+    input_basename = os.path.splitext(os.path.basename(args.input))[0]
+    EXP_DIR = os.path.join(args.outdir, input_basename)
+    
+    EIG_DIR = os.path.join(EXP_DIR, "eigvals")
+    COS_DIR = os.path.join(EXP_DIR, "cosine")
+    COS_PROJ_SEQ_DIR = os.path.join(EXP_DIR, "cosine_proj_seq_len")
+    COS_PROJ_DIR = os.path.join(EXP_DIR, f"cosine_proj_p{args.p}")
+    
+    for d in [EIG_DIR, COS_DIR, COS_PROJ_SEQ_DIR, COS_PROJ_DIR]:
+        os.makedirs(d, exist_ok=True)
+        
+    print(f"[*] Starting Attention Outputs analysis for: {args.input}")
+    print(f"[*] Results will be saved in: {EXP_DIR}")
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# ============================================================
-# Load model & tokenizer
-# ============================================================
-login()
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    # ============================================================
+    # 2. LOAD MODEL & REGISTER HOOKS
+    # ============================================================
+    print(f"[*] Loading model {args.model}...")
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model,
+        torch_dtype=torch.float32,
+        device_map="auto"
+    )
+    model.eval()
 
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_NAME,
-    torch_dtype=torch.float32,
-    device_map="auto"
-)
+    # Hook mechanism to capture attention outputs
+    attn_outputs = {}
 
-model.eval()
+    def make_attn_hook(layer_id):
+        def hook(module, inp, out):
+            if isinstance(out, tuple):
+                attn_outputs[layer_id] = out[0].detach().cpu()
+            else:
+                attn_outputs[layer_id] = out.detach().cpu()
+        return hook
 
-attn_outputs = {}
+    # Registering hooks for all layers
+    for layer_id, layer in enumerate(model.model.layers):
+        layer.self_attn.register_forward_hook(make_attn_hook(layer_id))
 
-def make_attn_hook(layer_id):
-    def hook(module, inp, out):
-        # out can be a tensor or a tuple
-        if isinstance(out, tuple):
-            attn_outputs[layer_id] = out[0].detach().cpu()
-        else:
-            attn_outputs[layer_id] = out.detach().cpu()
-    return hook
+    # ============================================================
+    # 3. PROCESS INPUT TEXT
+    # ============================================================
+    if not os.path.exists(args.input):
+        raise FileNotFoundError(f"Input file not found: {args.input}")
 
-for layer_id, layer in enumerate(model.model.layers):
-    layer.self_attn.register_forward_hook(make_attn_hook(layer_id))
+    with open(args.input, "r", encoding="utf-8") as f:
+        text = f.read().strip()
 
-INPUT_FILE = "text.txt"
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=args.max_length)
 
-with open(INPUT_FILE, "r", encoding="utf-8") as f:
-    text = f.read().strip()
+    print("[*] Running inference to capture attention outputs...")
+    with torch.no_grad():
+        _ = model(**inputs)
 
-max_len = 256
-inputs = tokenizer(text, return_tensors="pt",truncation=True,max_length=max_len).to(device)
+    # Prepare dictionary of numpy arrays
+    hidden_states = {layer_id: t.squeeze(0).numpy() for layer_id, t in attn_outputs.items()}
+    seq_len = hidden_states[0].shape[0]
+    
+    print(f"[*] Extracted attention outputs for {seq_len} tokens across {len(hidden_states)} layers.")
 
-with torch.no_grad():
-    outputs = model(**inputs)
+    # ============================================================
+    # STEP 1: Covariance + Eigenvalues
+    # ============================================================
+    print("[*] Computing Covariance and Eigenvalues...")
+    eigvals = {}
+    eigvecs = {}
 
-first_layer = list(attn_outputs.keys())[0]
-seq_len = attn_outputs[first_layer].shape[1]
+    for i, X in hidden_states.items():
+        # np.cov expects variables as rows by default, rowvar=False changes this
+        C = np.cov(X, rowvar=False, bias=False)
 
-var = {}
-for i in range(16):
-    var[i] = np.cov(attn_outputs[i].squeeze(0).numpy(), rowvar=False, bias=False)
+        vals, vecs = np.linalg.eigh(C)
+        idx = np.argsort(vals)[::-1]
 
-eigvals = {}
-eigvecs = {}
-for i in range(16):
-    eigvals[i], eigvecs[i] = np.linalg.eigh(var[i])
-    idx = np.argsort(eigvals[i])[::-1]
-    eigvals[i] = eigvals[i][idx]
-    eigvecs[i]= eigvecs[i][:, idx]
+        eigvals[i] = vals[idx]
+        eigvecs[i] = vecs[:, idx]
 
-EIG_DIR = os.path.join(FIG_DIR, "eigvals")
+        plt.figure(figsize=(6, 4))
+        plt.plot(eigvals[i][:seq_len], marker='o', linestyle='-', markersize=3)
+        plt.yscale("log")
+        plt.title(f"Layer {i} Eigenvalues (Attention Output)")
+        plt.xlabel("Eigenvalue index")
+        plt.ylabel("Eigenvalue (log scale)")
+        plt.grid(True, which="both", ls="--", alpha=0.5)
+        plt.savefig(os.path.join(EIG_DIR, f"layer_{i}_eigvals.png"), bbox_inches='tight')
+        plt.close()
 
-os.makedirs(EIG_DIR, exist_ok=True)
+    # ============================================================
+    # STEP 2: Cosine similarity (raw)
+    # ============================================================
+    print("[*] Computing Raw Cosine Similarities...")
+    for i, X in hidden_states.items():
+        Xc = X - X.mean(axis=0, keepdims=True)
+        Xn = Xc / np.linalg.norm(Xc, axis=1, keepdims=True)
+        cos = Xn @ Xn.T
 
-for layer_id, eig in eigvals.items():
-    plt.figure(figsize=(6,4))
+        plt.figure(figsize=(6, 5))
+        plt.imshow(cos, cmap="coolwarm", vmin=-1, vmax=1)
+        plt.colorbar(label="Cosine similarity")
+        plt.title(f"Layer {i} - Cosine Similarity (Attn Output)")
+        plt.xlabel("Token index")
+        plt.ylabel("Token index")
+        plt.tight_layout()
+        plt.savefig(os.path.join(COS_DIR, f"layer_{i}_cosine.png"), bbox_inches='tight')
+        plt.close()
 
-    eig_to_plot = eig[:]
+    # ============================================================
+    # STEP 3: Projection (seq_len) → denoising
+    # ============================================================
+    print("[*] Computing Denoised Cosine Similarities (proj seq_len)...")
+    for i, X in hidden_states.items():
+        Xc = X - X.mean(axis=0, keepdims=True)
+        
+        max_dim = min(seq_len - 1, Xc.shape[1])
+        V = eigvecs[i][:, :max_dim]
+        W = Xc @ V
 
-    plt.plot(eig_to_plot, marker='o', linestyle='-', markersize=3)
-    plt.yscale('log')  # log scale for better visualization
-    plt.xlabel("Eigenvalue index")
-    plt.ylabel("Eigenvalue (log scale)")
-    plt.title(f"Layer {layer_id} Eigenvalues (top 256)")
-    plt.grid(True, which="both", ls="--", alpha=0.5)
+        Wn = W / np.linalg.norm(W, axis=1, keepdims=True)
+        cos = Wn @ Wn.T
 
-    fname = os.path.join(EIG_DIR, f"layer_{layer_id}_eigvals.png")
-    plt.savefig(fname, bbox_inches='tight')
-    plt.close()
+        plt.figure(figsize=(6, 5))
+        plt.imshow(cos, cmap="coolwarm", vmin=-1, vmax=1)
+        plt.colorbar(label="Cosine similarity")
+        plt.title(f"Layer {i} - Cosine Similarity (Proj seq_len)")
+        plt.xlabel("Token index")
+        plt.ylabel("Token index")
+        plt.tight_layout()
+        plt.savefig(os.path.join(COS_PROJ_SEQ_DIR, f"layer_{i}_cosine_proj_seq_len.png"), bbox_inches='tight')
+        plt.close()
 
+    # ============================================================
+    # STEP 4: PCA projection (k) based on variance 'p'
+    # ============================================================
+    print(f"[*] Computing PCA Projected Cosine Similarities (p={args.p})...")
+    k_vals = {}
 
-import os
+    for i, X in hidden_states.items():
+        k = select_pca_dim(eigvals[i], p=args.p)
+        k_vals[i] = k
 
-FIG_DIR = "figures" # Defining FIG_DIR here to ensure it's always available
+        Xc = X - X.mean(axis=0, keepdims=True)
+        V = eigvecs[i][:, :k]
+        Z = Xc @ V
 
-print("Figures saved in the following directories:")
-for root, dirs, files in os.walk(FIG_DIR):
-    for file in files:
-        print(os.path.join(root, file))
+        Zn = Z / np.linalg.norm(Z, axis=1, keepdims=True)
+        cos = Zn @ Zn.T
 
-COS_DIR = os.path.join(FIG_DIR, "cosine")
-os.makedirs(COS_DIR, exist_ok=True)
+        plt.figure(figsize=(6, 5))
+        plt.imshow(cos, cmap="coolwarm", vmin=-1, vmax=1)
+        plt.colorbar(label="Cosine similarity")
+        plt.title(f"Layer {i} - Cosine (PCA k={k})")
+        plt.xlabel("Token index")
+        plt.ylabel("Token index")
+        plt.tight_layout()
+        plt.savefig(os.path.join(COS_PROJ_DIR, f"layer_{i}_cosine_proj.png"), bbox_inches='tight')
+        plt.close()
 
-for layer_id, X in attn_outputs.items():
+    print("[*] Analysis complete! K dimensions per layer:")
+    print(k_vals)
 
-    X = X.squeeze(0).numpy()
-    X = X - X.mean(axis=0, keepdims=True)
-    X_norm = X / np.linalg.norm(X, axis=1, keepdims=True)
-
-    cos_sim = X_norm @ X_norm.T
-
-    plt.figure(figsize=(6,5))
-    plt.imshow(cos_sim, cmap="coolwarm", vmin=-1, vmax=1)
-    plt.colorbar(label="Cosine similarity")
-    plt.title(f"Layer {layer_id} – Cosine Similarity (Attention Output)")
-    plt.xlabel("Token index")
-    plt.ylabel("Token index")
-    plt.tight_layout()
-
-    fname = os.path.join(COS_DIR, f"layer_{layer_id}_cosine.png")
-    plt.savefig(fname, bbox_inches="tight")
-    plt.close()
-
-def select_pca_dim(eigvals_layer, p=0.9):
-    total_var = np.sum(eigvals_layer)
-    cum_var = np.cumsum(eigvals_layer)
-    k_layer = np.searchsorted(cum_var / total_var, p) + 1
-    return k_layer
-
-k = {}
-for layer_id, vals in eigvals.items():
-    k[layer_id] = select_pca_dim(vals, p=0.9)
-
-W = {}
-for layer_id in range(16):  # Utiliser layer_id directement
-    if layer_id not in attn_outputs:
-        continue
-    X = attn_outputs[layer_id].squeeze(0).numpy()  # ICI layer_id est correct
-    mu = X.mean(axis=0, keepdims=True)
-    X_centered = X - mu
-    # Sélection dimension correcte
-    max_dim = min(seq_len-1, X.shape[1])
-    V_k = eigvecs[layer_id][:, :max_dim]
-    W[layer_id] = X_centered @ V_k
-
-COS_PROJ_DIR_SEQ_LEN = os.path.join(FIG_DIR, "cosine_proj_seq_len")
-os.makedirs(COS_PROJ_DIR_SEQ_LEN, exist_ok=True)
-
-for layer_id, W_layer in W.items():
-
-    W_norm = W_layer / np.linalg.norm(W_layer, axis=1, keepdims=True)
-    cos_sim = W_norm @ W_norm.T
-
-    plt.figure(figsize=(6,5))
-    plt.imshow(cos_sim, cmap="coolwarm", vmin=-1, vmax=1)
-    plt.colorbar(label="Cosine similarity")
-    plt.title(f"Layer {layer_id} – Cosine Similarity (Projected for seq_len)")
-    plt.xlabel("Token index")
-    plt.ylabel("Token index")
-    plt.tight_layout()
-
-    fname = os.path.join(COS_PROJ_DIR_SEQ_LEN, f"layer_{layer_id}_cosine_proj_seq_len.png")
-    plt.savefig(fname, bbox_inches="tight")
-    plt.close()
-
-Z = {}
-for i in range(16):
-    X = attn_outputs[i].squeeze(0).numpy()
-    mu = X.mean(axis=0, keepdims=True)
-    X_centered = X - mu
-    V_k = eigvecs[i][:, :k[i]]
-    Z[i] = X_centered @ V_k
-
-COS_PROJ_DIR = os.path.join(FIG_DIR, "cosine_proj")
-os.makedirs(COS_PROJ_DIR, exist_ok=True)
-
-for layer_id, Z_layer in Z.items():
-
-    Z_norm = Z_layer / np.linalg.norm(Z_layer, axis=1, keepdims=True)
-    cos_sim = Z_norm @ Z_norm.T
-
-    plt.figure(figsize=(6,5))
-    plt.imshow(cos_sim, cmap="coolwarm", vmin=-1, vmax=1)
-    plt.colorbar(label="Cosine similarity")
-    plt.title(f"Layer {layer_id} – Cosine Similarity (Projected)")
-    plt.xlabel("Token index")
-    plt.ylabel("Token index")
-    plt.tight_layout()
-
-    fname = os.path.join(COS_PROJ_DIR, f"layer_{layer_id}_cosine_proj.png")
-    plt.savefig(fname, bbox_inches="tight")
-    plt.close()
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="PCA and Cosine Similarity Analysis of Attention Outputs")
+    
+    # Required arguments
+    parser.add_argument("--input", type=str, required=True, help="Path to the input text file")
+    
+    # Optional arguments
+    # Note: Default outdir is specific to attention outputs!
+    parser.add_argument("--outdir", type=str, default="figures/pca_attention", help="Base directory to save figures")
+    parser.add_argument("--model", type=str, default="meta-llama/Llama-3.2-1B-Instruct", help="HuggingFace model name")
+    parser.add_argument("--p", type=float, default=0.9, help="Variance threshold for PCA (e.g., 0.9, 0.99)")
+    parser.add_argument("--max_length", type=int, default=256, help="Maximum sequence length to tokenize")
+    
+    args = parser.parse_args()
+    main(args)
