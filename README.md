@@ -110,32 +110,34 @@ All scripts expose a unified command-line interface (CLI).
 ### Example usage
 
 
-1. Run standard PCA on hidden states with default settings (p=0.9):
-
-```bash
-python 02_embedding-vector-correlation/pca_embeddings.py --input 03_data/alice_wonderland.txt
-```
-
-2. Run SVD on attention outputs with a stricter threshold (99% variance retention):
-
-```bash
-python 02_embedding-vector-correlation/svd_attention_outputs.py --input 03_data/alice_vs_quantum.txt --p 0.99
-```
-
-3. Run SVD on hidden states with high stability threshold 
-   (*Note: The residual stream contains a strong global directional bias. A high threshold (e.g. 0.999) is recommended to avoid overly uniform cosine similarity matrices.*) :
-
-```bash
-python 02_embedding-vector-correlation/svd_embeddings.py --input 03_data/alice_wonderland.txt --p 0.999
-```
-
-4. Generate attention heatmaps and RoPE geometric analysis for a long sequence:
+1. Generate attention heatmaps and RoPE geometric analysis for a long sequence:
 
 ```bash
 python 01_long-context-modeling/long_context_analysis.py \
     --input 03_data/alice_wonderland.txt \
     --max_length 1024
 ```
+
+2. Run standard PCA on hidden states with default settings (p=0.9):
+
+```bash
+python 02_embedding-vector-correlation/pca_embeddings.py --input 03_data/alice_wonderland.txt
+```
+
+3. Run SVD on attention outputs with a stricter threshold (99% variance retention):
+
+```bash
+python 02_embedding-vector-correlation/svd_attention_outputs.py --input 03_data/alice_vs_quantum.txt --p 0.99
+```
+
+4. Run SVD on hidden states with high stability threshold 
+   (*Note: The residual stream contains a strong global directional bias. A high threshold (e.g. 0.999) is recommended to avoid overly uniform cosine similarity matrices.*) :
+
+```bash
+python 02_embedding-vector-correlation/svd_embeddings.py --input 03_data/alice_wonderland.txt --p 0.999
+```
+
+
 
 ---
 
