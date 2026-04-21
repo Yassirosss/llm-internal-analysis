@@ -1,4 +1,5 @@
 import os
+import argparse
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -8,28 +9,29 @@ matplotlib.use('Agg')
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-# ============================================================
-# CONFIGURATION
-# ============================================================
-MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"
-DATA_PATH = os.path.join("03_data", "alice_in_wonderland.txt")
-FIG_DIR = os.path.join("figures", "long_context")
-
-os.makedirs(FIG_DIR, exist_ok=True)
-device = "cuda" if torch.cuda.is_available() else "cpu"
-
-
-def main():
+def main(args):
     print("[*] Starting Long Context Analysis (Chapter 3)")
     
     # ============================================================
+    # 0. SETUP DYNAMIC DIRECTORIES
+    # ============================================================
+    input_basename = os.path.splitext(os.path.basename(args.input))[0]
+    fig_dir = os.path.join("figures", "long_context", input_basename)
+    os.makedirs(fig_dir, exist_ok=True)
+    
+    print(f"[*] Analyzing text: {args.input}")
+    print(f"[*] Results will be saved in: {fig_dir}")
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # ============================================================
     # 1. SETUP ET CHARGEMENT
     # ============================================================
-    print(f"[*] Loading model {MODEL_NAME}...")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    print(f"[*] Loading model {args.model}...")
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
     
     model = AutoModelForCausalLM.from_pretrained(
-        MODEL_NAME,
+        args.model,
         torch_dtype=torch.float32,
         device_map="auto",
         attn_implementation="eager"
@@ -37,32 +39,25 @@ def main():
     model.eval()
 
     # ============================================================
-    # DATA PATH 
+    # DATA PATH HANDLING
     # ============================================================
-    data_path = DATA_PATH
+    if not os.path.exists(args.input):
+        raise FileNotFoundError(f"Fichier introuvable : {args.input}")
 
-    if not os.path.exists(data_path):
-        alt_path = os.path.join("..", data_path)
-        if os.path.exists(alt_path):
-            data_path = alt_path
-        else:
-            raise FileNotFoundError(f"Fichier introuvable : {DATA_PATH}")
-
-    with open(data_path, "r", encoding="utf-8") as f:
+    with open(args.input, "r", encoding="utf-8") as f:
         text = f.read().strip()
 
     # ============================================================
     # TOKENIZATION
     # ============================================================
-    max_len = 512
     inputs = tokenizer(
         text,
         return_tensors="pt",
         truncation=True,
-        max_length=max_len
+        max_length=args.max_length
     )
 
-    
+    # Éviter le conflit device_map="auto" en utilisant model.device
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
 
     tokens_text = tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
@@ -93,7 +88,7 @@ def main():
     plt.yscale('log')
     plt.title("RoPE Inverse Frequencies")
     plt.grid(True, alpha=0.5)
-    plt.savefig(os.path.join(FIG_DIR, "rope_frequencies.png"), bbox_inches="tight")
+    plt.savefig(os.path.join(fig_dir, "rope_frequencies.png"), bbox_inches="tight")
     plt.close()
 
     # ============================================================
@@ -113,7 +108,7 @@ def main():
 
         plt.title(title)
         plt.tight_layout()
-        plt.savefig(os.path.join(FIG_DIR, filename), bbox_inches="tight")
+        plt.savefig(os.path.join(fig_dir, filename), bbox_inches="tight")
         plt.close()
 
     # ============================================================
@@ -173,11 +168,20 @@ def main():
     plt.ylabel("Attention Mass")
     plt.legend()
     plt.grid(True)
-    plt.savefig(os.path.join(FIG_DIR, "token_influence.png"), bbox_inches="tight")
+    plt.savefig(os.path.join(fig_dir, "token_influence.png"), bbox_inches="tight")
     plt.close()
 
-    print(f"[*] Done. Figures saved in {FIG_DIR}")
-
+    print(f"[*] Done. Figures saved in {fig_dir}")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Long Context Analysis (Chapter 3)")
+    
+    # Required argument
+    parser.add_argument("--input", type=str, required=True, help="Path to the text file to analyze.")
+    
+    # Optional arguments
+    parser.add_argument("--max_length", type=int, default=512, help="Maximum sequence length to tokenize (Default: 512).")
+    parser.add_argument("--model", type=str, default="meta-llama/Llama-3.2-1B-Instruct", help="HuggingFace model name (Default: meta-llama/Llama-3.2-1B-Instruct).")
+    
+    args = parser.parse_args()
+    main(args)
