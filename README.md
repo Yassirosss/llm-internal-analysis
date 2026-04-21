@@ -21,6 +21,7 @@ The analysis is conducted on [LLaMA 3.2 1B Instruct](https://huggingface.co/meta
 ## Repository Structure
 
 ```
+
 llm-internal-analysis/
 │
 ├── 01_long-context-modeling/
@@ -33,16 +34,21 @@ llm-internal-analysis/
 │   └── svd_embeddings.py
 │
 ├── 03_data/
-│   ├── alice_wonderland.txt          # main input (full text)
-│   ├── alice_vs_quantum.txt          # experiment: two contrasting topics
-│   └── recurrent_motif.txt           # experiment: repetitive structure
+│   ├── alice_wonderland.txt
+│   ├── alice_vs_quantum.txt
+│   └── recurrent_motif.txt
 │
 ├── 04_docs/
 │   ├── report.pdf
 │   └── slides.pdf
 │
+├── 05_test/
+│   ├── colab_smoke_test.ipynb
+│   └── colab_smoke_test_outputs.ipynb
+│
 ├── README.md
 └── requirements.txt
+
 ```
 
 ---
@@ -80,33 +86,29 @@ Four scripts, each generating figures per layer:
 pip install -r requirements.txt
 ```
 
-Main dependencies: `torch`, `transformers`, `numpy`, `matplotlib`, `scikit-learn`.
-### Running the Scripts
-
-#### Chapter 3
-
-To generate the attention heatmaps and RoPE visualizations:
-
-```bash
-python 01_long-context-modeling/long_context_analysis.py
-```
+Main dependencies:
+`torch`, `transformers`, `numpy`, `matplotlib`, `scikit-learn`
 
 ---
 
-#### Chapter 4
+## Running the Scripts
 
-All scripts in `02_embedding-vector-correlation/` share a standardized Command Line Interface (CLI).
+All scripts expose a unified command-line interface (CLI).
 
-**General Arguments:**
+### Common arguments
 
-* `--input` (required): Path to the text file to analyze.
-* `--p` (optional): Variance/energy retention threshold (Default: `0.9`).
-* `--max_length` (optional): Maximum sequence length to tokenize (Default: `256`).
-* `--model` (optional): HuggingFace model name (Default: `meta-llama/Llama-3.2-1B-Instruct`).
+* `--input` (required): Path to input text file
+* `--max_length` (optional): Maximum sequence length (default: 256)
+* `--model` (optional): HuggingFace model name (default: LLaMA 3.2 1B Instruct)
+
+### Chapter-specific arguments
+
+* `--p` (optional, Chapter 4 only): Variance/energy retention threshold (default: 0.9)
 
 ---
 
-### Examples of usage
+### Example usage
+
 
 1. Run standard PCA on hidden states with default settings (p=0.9):
 
@@ -127,6 +129,39 @@ python 02_embedding-vector-correlation/svd_attention_outputs.py --input 03_data/
 python 02_embedding-vector-correlation/svd_embeddings.py --input 03_data/alice_wonderland.txt --p 0.999
 ```
 
+4. Generate attention heatmaps and RoPE geometric analysis for a long sequence:
+
+```bash
+python 01_long-context-modeling/long_context_analysis.py \
+    --input 03_data/alice_wonderland.txt \
+    --max_length 1024
+```
+
+---
+
+## Testing
+
+The repository includes a lightweight reproducibility suite in `05_test/`.
+
+It is designed to validate:
+
+* CLI correctness across all scripts
+* Model loading and inference pipeline
+* End-to-end execution consistency
+
+### Contents
+
+```
+05_test/
+│
+├── colab_smoke_test.ipynb
+└── colab_smoke_test_outputs.ipynb
+```
+
+### Usage
+
+Run the notebook in Google Colab to perform a fast smoke test with reduced input size and sequence length.
+
 ---
 
 ## Data
@@ -141,6 +176,7 @@ python 02_embedding-vector-correlation/svd_embeddings.py --input 03_data/alice_w
 
 ## Notes
 
-- Figures are not tracked by git. Run the scripts to regenerate them locally in the `figures/` directory.
-- The model is loaded from HuggingFace (`meta-llama/Llama-3.2-1B-Instruct`). A HuggingFace token with access to the model is required.
-- All experiments were run on Google Colab (GPU).
+* Figures are not tracked by git. They are regenerated locally in a `figures/` directory when running scripts.
+* The model is loaded from HuggingFace (`meta-llama/Llama-3.2-1B-Instruct`). A HuggingFace token with access to the model is required.
+* All experiments were executed on Google Colab (GPU environment).
+
